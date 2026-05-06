@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import wave
@@ -16,7 +17,64 @@ from config import Settings
 
 from .vad import StreamingMonoResampler, VoiceActivityDetector
 
+log = logging.getLogger(__name__)
+
 RmsCallback = Callable[[float], None] | None
+
+_ERR_NO_INPUT_DEFAULT = (
+    "No default audio input device (PortAudio reports default index -1). "
+    "Use a graphical session with PipeWire/Pulse running, set PI_ASSISTANT_INPUT_DEVICE "
+    "to a device index or name (e.g. pipewire), and check: pactl get-default-source"
+)
+
+_ERR_NO_OUTPUT_DEFAULT = (
+    "No default audio output device (PortAudio reports default index -1). "
+    "Set PI_ASSISTANT_OUTPUT_DEVICE (e.g. pipewire) and check: pactl get-default-sink"
+)
+
+
+def resolve_input_device(settings: Settings) -> int | str:
+    """PortAudio input id or host/device name substring for sounddevice."""
+    if settings.input_device is not None:
+        return settings.input_device
+    idx = sd.default.device[0]
+    if idx is None or int(idx) < 0:
+        raise RuntimeError(_ERR_NO_INPUT_DEFAULT)
+    return int(idx)
+
+
+def resolve_output_device(settings: Settings) -> int | str:
+    if settings.output_device is not None:
+        return settings.output_device
+    idx = sd.default.device[1]
+    if idx is None or int(idx) < 0:
+        raise RuntimeError(_ERR_NO_OUTPUT_DEFAULT)
+    return int(idx)
+
+
+def verify_audio_devices(settings: Settings) -> None:
+    """Log resolved devices; raise RuntimeError with hints if they are not usable."""
+    in_dev = resolve_input_device(settings)
+    out_dev = resolve_output_device(settings)
+    try:
+        in_info = sd.query_devices(in_dev, "input")
+        out_info = sd.query_devices(out_dev, "output")
+    except Exception as e:
+        raise RuntimeError(
+            f"Audio device not available (input={in_dev!r}, output={out_dev!r}). "
+            "Run `python -c \"import sounddevice as sd; print(sd.query_devices()); "
+            'print(sd.default.device)"` and set PI_ASSISTANT_INPUT_DEVICE / OUTPUT_DEVICE.'
+        ) from e
+    log.info(
+        "Audio input: %s (~%s Hz)",
+        in_info["name"],
+        int(in_info["default_samplerate"]),
+    )
+    log.info(
+        "Audio output: %s (~%s Hz)",
+        out_info["name"],
+        int(out_info["default_samplerate"]),
+    )
 
 
 def _write_wav_mono16(path: Path, samples: np.ndarray, sample_rate: int) -> None:
@@ -39,9 +97,7 @@ def record_until_silence(
     Record from default input until silence after speech, or max duration.
     Returns path to a temporary 16 kHz mono WAV suitable for whisper.cpp.
     """
-    in_dev = settings.input_device
-    if in_dev is None:
-        in_dev = sd.default.device[0]
+    in_dev = resolve_input_device(settings)
     device_info = sd.query_devices(in_dev, "input")
     device_sr = int(device_info["default_samplerate"])
     block = max(256, device_sr // 50)  # ~20ms at native rate
@@ -139,10 +195,13 @@ def play_wav(
     if ch > 1:
         audio = audio.reshape(-1, ch).mean(axis=1).astype(np.int16)
 
-    out_dev = settings.output_device
-    stream_kwargs: dict = {"samplerate": sr, "channels": 1, "dtype": "int16"}
-    if out_dev is not None:
-        stream_kwargs["device"] = out_dev
+    out_dev = resolve_output_device(settings)
+    stream_kwargs: dict = {
+        "samplerate": sr,
+        "channels": 1,
+        "dtype": "int16",
+        "device": out_dev,
+    }
 
     with sd.OutputStream(**stream_kwargs) as stream:
         chunk = int(sr * 0.05)

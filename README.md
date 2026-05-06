@@ -43,8 +43,22 @@ All app keys use the prefix **`PI_ASSISTANT_`** (see [`config.py`](config.py)). 
 | `PI_ASSISTANT_WHISPER_CLI` / `PI_ASSISTANT_WHISPER_MODEL` | whisper.cpp binary + model |
 | `PI_ASSISTANT_PIPER_BIN` / `PI_ASSISTANT_PIPER_VOICE` | Piper binary + ONNX voice |
 | `PI_ASSISTANT_FULLSCREEN` | `true` / `false` for Pygame |
+| `PI_ASSISTANT_INPUT_DEVICE` / `PI_ASSISTANT_OUTPUT_DEVICE` | sounddevice index **or** name substring (e.g. `pipewire`); unset = PortAudio default |
 
 Deploy from a laptop: set `PI_HOST` in `.env`, run [`./deploy.sh`](deploy.sh).
+
+### Audio (PipeWire, Bluetooth)
+
+On **Raspberry Pi OS** with **PipeWire**, PortAudio often lists devices such as `pipewire`, `pulse`, and `default`. Pinning **`PI_ASSISTANT_INPUT_DEVICE=pipewire`** and **`PI_ASSISTANT_OUTPUT_DEVICE=pipewire`** routes capture and playback through PipeWire so Bluetooth or USB changes are handled by your session defaults instead of fragile raw indices.
+
+At startup the app **verifies** devices and logs their names. If you see “no default device” or `-1`, run from a **desktop terminal** (not a bare SSH session without audio), ensure PipeWire is running, and check:
+
+```bash
+pactl get-default-source
+pactl get-default-sink
+```
+
+**Bluetooth headsets** often work better as **output only**; use a USB or onboard **mic** for input if capture is silent or unreliable.
 
 ## Web search (optional, online)
 

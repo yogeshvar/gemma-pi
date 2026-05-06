@@ -3,10 +3,29 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _coerce_sounddevice_specifier(v: Any) -> int | str | None:
+    """Env-friendly: None/empty → None; numeric strings → int; else str (e.g. pipewire)."""
+    if v is None:
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if not s or s.lower() in ("none", "null"):
+            return None
+        if s.isdigit():
+            return int(s, 10)
+        return s
+    return v
+
+
+SoundDeviceSpecifier = Annotated[int | str | None, BeforeValidator(_coerce_sounddevice_specifier)]
 
 
 class Settings(BaseSettings):
@@ -65,8 +84,14 @@ class Settings(BaseSettings):
     vad_frame_ms: int = Field(default=30, description="webrtcvad frame size: 10, 20, or 30")
     end_of_speech_ms: int = Field(default=800, description="Silence duration after speech to stop")
     max_record_seconds: int = Field(default=120)
-    input_device: int | None = Field(default=None, description="sounddevice index; None = default")
-    output_device: int | None = Field(default=None)
+    input_device: SoundDeviceSpecifier = Field(
+        default=None,
+        description="sounddevice index or name substring (e.g. pipewire); None = PortAudio default input",
+    )
+    output_device: SoundDeviceSpecifier = Field(
+        default=None,
+        description="sounddevice index or name substring; None = PortAudio default output",
+    )
 
     # Display
     screen_width: int = Field(default=800)

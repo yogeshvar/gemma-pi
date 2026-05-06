@@ -11,6 +11,7 @@ import time
 from rich.logging import RichHandler
 
 from config import get_settings
+from core.audio_io import verify_audio_devices
 
 
 def _setup_logging(level: str) -> None:
@@ -105,6 +106,7 @@ def main() -> None:
     args = parser.parse_args()
     settings = get_settings()
     _setup_logging(settings.log_level)
+    verify_audio_devices(settings)
     if args.cli:
         run_cli()
     else:
