@@ -1,0 +1,16 @@
+[Unit]
+Description=Pi Assistant (offline voice + Pygame face)
+After=graphical-session.target sound.target network-online.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/gemma-pi
+Environment=PYTHONUNBUFFERED=1
+Environment=DISPLAY=:0
+ExecStart=%h/gemma-pi/venv/bin/python %h/gemma-pi/main.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
