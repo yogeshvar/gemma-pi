@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BeforeValidator, Field
+from pydantic import AliasChoices, BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,9 +36,17 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Ollama
-    ollama_host: str = Field(default="http://127.0.0.1:11434")
-    ollama_model: str = Field(default="gemma3:1b")
+    # llama.cpp (llama-server OpenAI-compatible API)
+    llamacpp_base_url: str = Field(
+        default="http://127.0.0.1:8080/v1",
+        validation_alias=AliasChoices("llamacpp_base_url", "ollama_host"),
+        description="Base URL with /v1 suffix (POST …/chat/completions)",
+    )
+    llamacpp_model: str = Field(
+        default="gemma3-1b-it",
+        validation_alias=AliasChoices("llamacpp_model", "ollama_model"),
+        description="model id in JSON body — match llama-server -m / docs for your GGUF",
+    )
 
     # Web search (optional; requires network + provider credentials unless provider is ddgs)
     web_search_enabled: bool = Field(default=False)

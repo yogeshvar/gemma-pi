@@ -1,4 +1,4 @@
-"""Tests for chat_with_tools (Ollama client mocked)."""
+"""Tests for chat_with_tools (llama-server client mocked)."""
 
 from __future__ import annotations
 
@@ -7,27 +7,49 @@ from unittest.mock import MagicMock, patch
 
 from config import Settings
 from core.llm import chat_with_tools
-from ollama._types import ChatResponse, Message
 
 
 class ChatWithToolsTests(unittest.TestCase):
     def test_runs_tool_then_returns_answer(self) -> None:
         settings = Settings(
             web_search_max_tool_rounds=3,
-            ollama_model="test-model",
+            llamacpp_model="test-model",
         )
-        tc = Message.ToolCall(
-            function=Message.ToolCall.Function(name="web_search", arguments={"query": "weather"})
-        )
-        msg_tool = Message(role="assistant", content="", tool_calls=[tc])
-        msg_final = Message(role="assistant", content="It will be sunny.")
-        r1 = ChatResponse(model="test-model", message=msg_tool)
-        r2 = ChatResponse(model="test-model", message=msg_final)
+        r1_body = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "web_search",
+                                    "arguments": '{"query": "weather"}',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+        r2_body = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "It will be sunny.",
+                    }
+                }
+            ]
+        }
+        mock_r1 = MagicMock(ok=True)
+        mock_r1.json.return_value = r1_body
+        mock_r2 = MagicMock(ok=True)
+        mock_r2.json.return_value = r2_body
 
-        mock_client = MagicMock()
-        mock_client.chat.side_effect = [r1, r2]
-
-        with patch("core.llm._client", return_value=mock_client):
+        with patch("core.llm._post_chat_completions", side_effect=[mock_r1, mock_r2]) as post:
             with patch("core.llm.search_web", return_value="search results here") as sw:
                 out = chat_with_tools(
                     settings,
@@ -36,44 +58,51 @@ class ChatWithToolsTests(unittest.TestCase):
 
         self.assertEqual(out, "It will be sunny.")
         sw.assert_called_once()
-        self.assertEqual(mock_client.chat.call_count, 2)
-        second_call_kwargs = mock_client.chat.call_args_list[1].kwargs
-        self.assertIn("messages", second_call_kwargs)
-        msgs = second_call_kwargs["messages"]
+        self.assertEqual(post.call_count, 2)
+        second_kwargs = post.call_args_list[1].kwargs
+        msgs = second_kwargs["messages"]
         self.assertTrue(any(m.get("role") == "tool" for m in msgs))
 
     def test_unknown_tool_name(self) -> None:
-        settings = Settings(web_search_max_tool_rounds=3, ollama_model="m")
-        tc = Message.ToolCall(
-            function=Message.ToolCall.Function(name="nope", arguments={})
-        )
-        msg_tool = Message(role="assistant", tool_calls=[tc])
-        msg_final = Message(role="assistant", content="Done.")
-        mock_client = MagicMock()
-        mock_client.chat.side_effect = [
-            ChatResponse(model="m", message=msg_tool),
-            ChatResponse(model="m", message=msg_final),
-        ]
-        with patch("core.llm._client", return_value=mock_client):
+        settings = Settings(web_search_max_tool_rounds=3, llamacpp_model="m")
+        r1_body = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "c1",
+                                "type": "function",
+                                "function": {"name": "nope", "arguments": "{}"},
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+        r2_body = {
+            "choices": [{"message": {"role": "assistant", "content": "Done."}}]
+        }
+        mock_r1 = MagicMock(ok=True)
+        mock_r1.json.return_value = r1_body
+        mock_r2 = MagicMock(ok=True)
+        mock_r2.json.return_value = r2_body
+        with patch("core.llm._post_chat_completions", side_effect=[mock_r1, mock_r2]):
             with patch("core.llm.search_web") as sw:
                 out = chat_with_tools(settings, [{"role": "user", "content": "x"}])
         sw.assert_not_called()
         self.assertEqual(out, "Done.")
 
     def test_falls_back_to_plain_chat_when_model_rejects_tools(self) -> None:
-        settings = Settings(web_search_max_tool_rounds=3, ollama_model="gemma3:1b")
+        settings = Settings(web_search_max_tool_rounds=3, llamacpp_model="gemma3-1b-it")
 
-        class FakeResponseError(Exception):
-            status_code = 400
+        mock_err = MagicMock()
+        mock_err.ok = False
+        mock_err.status_code = 400
+        mock_err.text = "this model does not support tools (status code: 400)"
 
-        err = FakeResponseError(
-            "registry.ollama.ai/library/gemma3:1b does not support tools (status code: 400)"
-        )
-
-        mock_client = MagicMock()
-        mock_client.chat.side_effect = err
-
-        with patch("core.llm._client", return_value=mock_client):
+        with patch("core.llm._post_chat_completions", return_value=mock_err):
             with patch("core.llm.chat", return_value="plain reply") as plain:
                 out = chat_with_tools(
                     settings,
@@ -87,7 +116,7 @@ class ChatWithToolsTests(unittest.TestCase):
             call_msgs,
             [{"role": "system", "content": "s"}, {"role": "user", "content": "hi"}],
         )
-        self.assertEqual(mock_client.chat.call_count, 1)
+        self.assertTrue(plain.call_args[1].get("stream", False))
 
 
 if __name__ == "__main__":

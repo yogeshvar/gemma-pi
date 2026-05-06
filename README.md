@@ -1,6 +1,6 @@
 # Pi Assistant (gemma-pi)
 
-Offline Raspberry Pi 5 voice assistant with a Pygame face, local Whisper + Ollama + Piper pipeline, and SQLite memory.
+Offline Raspberry Pi 5 voice assistant with a Pygame face, local Whisper + **llama.cpp** (`llama-server`) + Piper pipeline, and SQLite memory.
 
 ## Clone and bootstrap
 
@@ -10,7 +10,7 @@ cd gemma-pi
 ./bootstrap.sh
 ```
 
-`bootstrap.sh` creates **`venv/`**, installs **Python dependencies**, and (unless you pass `--skip-ollama`) ensures **Ollama** is installed (**Linux**: official install script; **macOS**: `brew install ollama` when Homebrew exists) and runs **`ollama pull`** for `PI_ASSISTANT_OLLAMA_MODEL` (default `gemma3:1b`). Use **`./bootstrap.sh --dry-run`** to print steps only.
+`bootstrap.sh` creates **`venv/`**, installs **Python dependencies**, and (unless you pass **`--skip-llm-server`**) probes **`llama-server`** at `PI_ASSISTANT_LLAMACPP_BASE_URL` (default `http://127.0.0.1:8080/v1`). It does **not** compile llama.cpp or download GGUF weights; see **Prerequisites** below. Use **`./bootstrap.sh --dry-run`** to print steps only. The flag **`--skip-ollama`** is a deprecated alias for **`--skip-llm-server`**.
 
 Then:
 
@@ -31,9 +31,10 @@ All app keys use the prefix **`PI_ASSISTANT_`** (see [`config.py`](config.py)). 
 
 | Variable | Purpose |
 |----------|---------|
-| `PI_ASSISTANT_OLLAMA_HOST` | Ollama base URL (default `http://127.0.0.1:11434`) |
-| `PI_ASSISTANT_OLLAMA_MODEL` | Model tag (default `gemma3:1b`) |
-| `PI_ASSISTANT_WEB_SEARCH_ENABLED` | `true` / `false` — expose Ollama **`web_search`** tool (needs network; see below) |
+| `PI_ASSISTANT_LLAMACPP_BASE_URL` | llama-server OpenAI base URL including **`/v1`** (default `http://127.0.0.1:8080/v1`) |
+| `PI_ASSISTANT_LLAMACPP_MODEL` | `model` field in JSON requests — match your server/GGUF setup (default `gemma3-1b-it`) |
+| `PI_ASSISTANT_OLLAMA_HOST` / `PI_ASSISTANT_OLLAMA_MODEL` | **Deprecated** — accepted as aliases for the llama-server URL and model id; use **`…8080/v1`**, not the old Ollama `:11434` base. |
+| `PI_ASSISTANT_WEB_SEARCH_ENABLED` | `true` / `false` — register OpenAI-style **`web_search`** tool with llama-server (needs network; see below) |
 | `PI_ASSISTANT_WEB_SEARCH_PROVIDER` | `ddgs` (default, no API key), `brave`, or `tavily` |
 | `PI_ASSISTANT_BRAVE_API_KEY` / `PI_ASSISTANT_TAVILY_API_KEY` | Provider keys when using Brave or Tavily |
 | `PI_ASSISTANT_WEB_SEARCH_MAX_RESULTS` / `MAX_CHARS` / `TIMEOUT_SECONDS` / `MAX_TOOL_ROUNDS` | Search snippet size and tool-loop cap |
@@ -63,15 +64,15 @@ pactl get-default-sink
 
 ## Web search (optional, online)
 
-When **`PI_ASSISTANT_WEB_SEARCH_ENABLED=true`**, Pi registers a **`web_search`** tool with Ollama: the model can search the web for time-sensitive or factual questions. This **requires network access** on the device running the app (unlike the default offline stack).
+When **`PI_ASSISTANT_WEB_SEARCH_ENABLED=true`**, Pi sends an OpenAI-style **`web_search`** tool definition to **llama-server** so the model can search the web for time-sensitive or factual questions. This **requires network access** on the device running the app (unlike the default offline stack).
 
-- **Models:** Tags like **`gemma3:1b`** may **not support tools** in Ollama (HTTP 400). The app then **falls back to normal chat** (no live web) and logs a warning. For real **`web_search`**, use a tool-capable model (e.g. **Llama 3.2**, **Mistral**, **Qwen 2.5**): `ollama pull llama3.2` and set `PI_ASSISTANT_OLLAMA_MODEL=llama3.2`.
+- **Models / server:** Tool calling depends on the **GGUF**, **chat template**, and **llama.cpp** build. If the server rejects tools (HTTP 400) or the model cannot use them, the app **falls back to normal chat** (no live web) and logs a warning. See the upstream [function calling](https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md) notes and pick a tool-capable setup (e.g. Llama 3.x, Mistral, Qwen 2.5-class models with matching templates).
 - **Providers:** Default **`ddgs`** uses the `duckduckgo-search` package (no API key). For production, consider **Brave** or **Tavily** with keys in `.env`.
 - **Prompts:** Markdown under [`prompts/web/`](prompts/web/) is merged into the **system** message only when web search is enabled (grounding, privacy, voice UX). Restart the app after changing `.env` so the merged system prompt matches the flag.
 
 ## Prompts (always sent to Gemma)
 
-Markdown files under [`prompts/`](prompts/) are read in **lexicographic order**, joined with `---` separators, and sent as the **system** message to Ollama. Files named `README.md` or starting with **`_`** are skipped. If the directory is missing or empty, a small built-in fallback is used.
+Markdown files under [`prompts/`](prompts/) are read in **lexicographic order**, joined with `---` separators, and sent as the **system** message to **llama-server**. Files named `README.md` or starting with **`_`** are skipped. If the directory is missing or empty, a small built-in fallback is used.
 
 Edit [`prompts/01_identity.md`](prompts/01_identity.md) and [`prompts/02_style.md`](prompts/02_style.md), or point `PI_ASSISTANT_PROMPT_DIR` at another folder.
 
@@ -116,6 +117,8 @@ systemctl --user enable --now pi-assistant.service
 Ensure `venv` exists and `DISPLAY=:0` for the graphical session.
 
 ## Prerequisites (not covered by bootstrap)
+
+**llama.cpp** (`llama-server`): build from [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) with the HTTP server enabled, obtain **GGUF** weights for your chosen instruct model, and run the server (example: `llama-server -m ~/models/your-model.gguf -c 4096 -t 4 --port 8080`). Keep **`PI_ASSISTANT_LLAMACPP_BASE_URL`** and **`PI_ASSISTANT_LLAMACPP_MODEL`** aligned with that process.
 
 **Whisper** (whisper.cpp), **Piper**, and **PipeWire** are still manual installs on the Pi; set env paths or defaults in `config.py`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 

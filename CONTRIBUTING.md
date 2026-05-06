@@ -1,6 +1,6 @@
 # Contributing
 
-1. Clone the repo and run `./bootstrap.sh` (add `--dry-run` to preview, `--skip-ollama` if you manage Ollama yourself).
+1. Clone the repo and run `./bootstrap.sh` (add `--dry-run` to preview, `--skip-llm-server` if you manage **llama-server** yourself or have not started it yet).
 2. Activate the venv: `source venv/bin/activate`.
 3. Adjust `.env` from `.env.example` if paths differ on your machine.
 4. Run `python main.py` (UI) or `python main.py --cli` (headless loop).
