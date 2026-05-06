@@ -1,4 +1,4 @@
-"""llama-server client — OpenAI-compatible chat, streaming, and web_search tool loop."""
+"""Ollama chat client — streaming chat and multi-turn tool loop for web_search."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any, Iterable, Mapping, Sequence, cast
 
-import requests
+from ollama import Client
 
 from config import Settings
 
@@ -36,33 +36,21 @@ WEB_SEARCH_TOOL: dict[str, Any] = {
 }
 
 
-class LlamaServerError(Exception):
-    """HTTP error from llama-server /chat/completions."""
-
-    def __init__(self, status_code: int, body: str) -> None:
-        self.status_code = status_code
-        self.body = body
-        super().__init__(f"llama-server HTTP {status_code}: {body[:500]}")
+def _client(settings: Settings) -> Client:
+    return Client(host=settings.ollama_host)
 
 
-def _chat_completions_url(settings: Settings) -> str:
-    base = settings.llamacpp_base_url.rstrip("/")
-    return f"{base}/chat/completions"
-
-
-def _model_rejects_tools(status_code: int, body: str) -> bool:
-    """True when the server/model cannot use tools (first round only)."""
-    if status_code != 400:
+def _model_rejects_tools(exc: Exception) -> bool:
+    """True when Ollama returns 400 because the model cannot use tools."""
+    code = getattr(exc, "status_code", None)
+    text = str(exc).lower()
+    if code != 400:
         return False
-    text = body.lower()
-    return (
-        "tool" in text
-        and ("not support" in text or "unsupported" in text or "no tools" in text)
-    ) or "does not support tools" in text
+    return "does not support tools" in text or "not support tools" in text
 
 
 def _messages_for_plain_chat(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
-    """Strip to role/content for chat without tools."""
+    """Strip to role/content strings for /api/chat without tools."""
     out: list[dict[str, str]] = []
     for m in messages:
         role = str(m.get("role", "user"))
@@ -77,11 +65,9 @@ def _messages_for_plain_chat(messages: Sequence[Mapping[str, Any]]) -> list[dict
     return out
 
 
-def _tool_args(arguments: Any) -> dict[str, Any]:
+def _tool_args(arguments: Mapping[str, Any] | str | None) -> dict[str, Any]:
     if arguments is None:
         return {}
-    if isinstance(arguments, dict):
-        return dict(arguments)
     if isinstance(arguments, str):
         if not arguments.strip():
             return {}
@@ -90,109 +76,48 @@ def _tool_args(arguments: Any) -> dict[str, Any]:
         except json.JSONDecodeError:
             log.warning("Invalid tool arguments JSON: %s", arguments[:200])
             return {}
-    return {}
-
-
-def _post_chat_completions(
-    settings: Settings,
-    *,
-    messages: list[Any],
-    tools: list[Any] | None = None,
-    stream: bool,
-    timeout: float = 300.0,
-) -> requests.Response:
-    url = _chat_completions_url(settings)
-    payload: dict[str, Any] = {
-        "model": settings.llamacpp_model,
-        "messages": messages,
-        "stream": stream,
-    }
-    if tools is not None:
-        payload["tools"] = tools
-    return requests.post(
-        url,
-        json=payload,
-        stream=stream,
-        timeout=timeout,
-        headers={"Content-Type": "application/json"},
-    )
-
-
-def _parse_non_stream_response(resp: requests.Response) -> dict[str, Any]:
-    if not resp.ok:
-        raise LlamaServerError(resp.status_code, resp.text)
-    data = resp.json()
-    if not isinstance(data, dict):
-        raise LlamaServerError(500, "non-JSON or invalid response")
-    return data
-
-
-def _assistant_message_from_choice(data: dict[str, Any]) -> dict[str, Any]:
-    choices = data.get("choices")
-    if not choices or not isinstance(choices, list):
-        raise LlamaServerError(500, "missing choices in response")
-    first = choices[0]
-    if not isinstance(first, dict):
-        raise LlamaServerError(500, "invalid choice")
-    msg = first.get("message")
-    if not isinstance(msg, dict):
-        raise LlamaServerError(500, "missing message in choice")
-    return msg
-
-
-def _iter_sse_deltas(resp: requests.Response) -> Iterable[str]:
-    for raw_line in resp.iter_lines(decode_unicode=True):
-        if not raw_line:
-            continue
-        line = raw_line.strip()
-        if not line.startswith("data:"):
-            continue
-        data = line[5:].strip()
-        if data == "[DONE]":
-            break
-        try:
-            chunk = json.loads(data)
-        except json.JSONDecodeError:
-            continue
-        choices = chunk.get("choices")
-        if not choices:
-            continue
-        delta = choices[0].get("delta") if isinstance(choices[0], dict) else None
-        if not isinstance(delta, dict):
-            continue
-        piece = delta.get("content")
-        if piece:
-            yield str(piece)
+    return dict(arguments)
 
 
 def chat(settings: Settings, messages: list[dict[str, str]], *, stream: bool = True) -> str:
-    """Return full assistant text. Streams from llama-server by default for lower TTFT."""
+    """Return full assistant text. Streams from Ollama by default for lower time-to-first-token."""
+    client = _client(settings)
     if stream:
-        with _post_chat_completions(
-            settings, messages=cast(list[Any], messages), tools=None, stream=True
-        ) as resp:
-            if not resp.ok:
-                raise LlamaServerError(resp.status_code, resp.text)
-            return "".join(_iter_sse_deltas(resp)).strip()
+        parts: list[str] = []
+        for chunk in client.chat(
+            model=settings.ollama_model,
+            messages=messages,
+            stream=True,
+        ):
+            msg = chunk.get("message") or {}
+            c = msg.get("content")
+            if c:
+                parts.append(c)
+        return "".join(parts).strip()
 
-    resp = _post_chat_completions(
-        settings, messages=cast(list[Any], messages), tools=None, stream=False
+    resp = client.chat(
+        model=settings.ollama_model,
+        messages=messages,
+        stream=False,
     )
-    data = _parse_non_stream_response(resp)
-    msg = _assistant_message_from_choice(data)
-    return str(msg.get("content") or "").strip()
+    msg = resp.get("message") or {}
+    return str(msg.get("content", "")).strip()
 
 
 def chat_stream_chunks(
     settings: Settings, messages: list[dict[str, str]]
 ) -> Iterable[str]:
     """Yield content fragments as they arrive (reserved for streaming TTS)."""
-    with _post_chat_completions(
-        settings, messages=cast(list[Any], messages), tools=None, stream=True
-    ) as resp:
-        if not resp.ok:
-            raise LlamaServerError(resp.status_code, resp.text)
-        yield from _iter_sse_deltas(resp)
+    client = _client(settings)
+    for chunk in client.chat(
+        model=settings.ollama_model,
+        messages=messages,
+        stream=True,
+    ):
+        msg = chunk.get("message") or {}
+        c = msg.get("content")
+        if c:
+            yield c
 
 
 def chat_with_tools(
@@ -202,69 +127,54 @@ def chat_with_tools(
     """
     Chat with web_search tool. Uses non-streaming completions so tool_calls parse reliably.
     """
+    client = _client(settings)
     tools: list[Any] = [WEB_SEARCH_TOOL]
     messages_work: list[Any] = [dict(m) for m in messages]
 
     for round_i in range(settings.web_search_max_tool_rounds):
-        resp = _post_chat_completions(
-            settings,
-            messages=messages_work,
-            tools=tools,
-            stream=False,
-        )
-        if not resp.ok:
-            body = resp.text
-            if round_i == 0 and _model_rejects_tools(resp.status_code, body):
+        try:
+            resp = client.chat(
+                model=settings.ollama_model,
+                messages=messages_work,
+                tools=tools,
+                stream=False,
+            )
+        except Exception as e:
+            if round_i == 0 and _model_rejects_tools(e):
                 log.warning(
-                    "Model %r or server rejected tools; answering without web_search. "
-                    "Use a tool-capable setup (see llama.cpp function-calling docs) or set "
+                    "Model %r does not support tools; answering without web_search. "
+                    "Pull a tool-capable model (e.g. llama3.2) or set "
                     "PI_ASSISTANT_WEB_SEARCH_ENABLED=false.",
-                    settings.llamacpp_model,
+                    settings.ollama_model,
                 )
                 plain = _messages_for_plain_chat(messages)
                 return chat(settings, plain, stream=True)
-            raise LlamaServerError(resp.status_code, body)
-
-        data = _parse_non_stream_response(resp)
-        msg = _assistant_message_from_choice(data)
-        tool_calls = msg.get("tool_calls")
+            raise
+        msg = resp.message
+        tool_calls = msg.tool_calls
 
         if not tool_calls:
-            text = str(msg.get("content") or "").strip()
+            text = (msg.content or "").strip()
             return text or "I didn't catch that."
 
-        assistant_msg: dict[str, Any] = {
-            "role": "assistant",
-            "content": msg.get("content"),
-            "tool_calls": tool_calls,
-        }
-        if assistant_msg["content"] is None:
-            assistant_msg.pop("content")
-        messages_work.append(assistant_msg)
-
-        if not isinstance(tool_calls, list):
-            log.warning("Unexpected tool_calls shape")
-            return str(msg.get("content") or "").strip() or "I didn't catch that."
+        assistant_dict = msg.model_dump(exclude_none=True)
+        messages_work.append(assistant_dict)
 
         for tc in tool_calls:
-            if not isinstance(tc, dict):
-                continue
-            fn = tc.get("function")
-            if not isinstance(fn, dict):
-                continue
-            name = str(fn.get("name") or "")
-            args = _tool_args(fn.get("arguments"))
-            tid = str(tc.get("id") or "")
+            fn = tc.function
+            name = fn.name
+            args = _tool_args(fn.arguments)
             if name == "web_search":
                 result = search_web(settings, str(args.get("query", "")))
             else:
                 result = f"Unknown tool {name!r}."
-            tool_msg: dict[str, Any] = {
-                "role": "tool",
-                "tool_call_id": tid,
-                "content": result,
-            }
-            messages_work.append(tool_msg)
+            messages_work.append(
+                {
+                    "role": "tool",
+                    "content": result,
+                    "tool_name": name,
+                }
+            )
 
         log.debug("web_search tool round %d completed", round_i + 1)
 
