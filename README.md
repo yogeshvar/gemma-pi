@@ -22,7 +22,7 @@ python main.py              # UI (fullscreen on Pi; use PI_ASSISTANT_FULLSCREEN=
 python main.py --cli       # terminal loop, no Pygame
 ```
 
-- **UI**: tap to talk, **Enter** from idle, **Esc** / **Q** quit, **f** (idle) forgets last exchange. On errors the face turns **rose** with a short message: **tap** or **Enter** to try again, **R** to dismiss to idle.
+- **UI**: tap to talk, **Enter** from idle, **Esc** / **Q** quit, **Ctrl+C** in the terminal also exits cleanly (restores the display after fullscreen). **f** (idle) forgets last exchange. Status text sits on a **readable panel** with animations while **listening** / **thinking**. Optional **voice fillers** (short spoken ack + “thinking” lines) play over the speaker while Whisper and the LLM run (`PI_ASSISTANT_VOICE_FILLERS_ENABLED`, default on). On errors the face turns **rose**: **tap** or **Enter** to try again, **R** to dismiss to idle.
 - **CLI**: empty line = listen; `f` = forget; `q` = quit.
 
 ## Configuration (`.env`)
@@ -44,6 +44,7 @@ All app keys use the prefix **`PI_ASSISTANT_`** (see [`config.py`](config.py)). 
 | `PI_ASSISTANT_PIPER_BIN` / `PI_ASSISTANT_PIPER_VOICE` | Piper binary + ONNX voice |
 | `PI_ASSISTANT_FULLSCREEN` | `true` / `false` for Pygame |
 | `PI_ASSISTANT_INPUT_DEVICE` / `PI_ASSISTANT_OUTPUT_DEVICE` | sounddevice index **or** name substring (e.g. `pipewire`); unset = PortAudio default |
+| `PI_ASSISTANT_VOICE_FILLERS_ENABLED` | `true` / `false` — short spoken lines while waiting on STT/LLM (default `true`) |
 
 Deploy from a laptop: set `PI_HOST` in `.env`, run [`./deploy.sh`](deploy.sh).
 

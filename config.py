@@ -92,6 +92,10 @@ class Settings(BaseSettings):
         default=None,
         description="sounddevice index or name substring; None = PortAudio default output",
     )
+    voice_fillers_enabled: bool = Field(
+        default=True,
+        description="Play brief ack + thinking phrases over speaker while waiting on STT/LLM",
+    )
 
     # Display
     screen_width: int = Field(default=800)

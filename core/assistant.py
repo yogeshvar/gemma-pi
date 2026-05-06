@@ -22,6 +22,7 @@ from .prompts import build_system_message
 from .stt import transcribe
 from .tts import synthesize
 from .vad import VoiceActivityDetector
+from .voice_fillers import random_ack, random_thinking
 
 log = logging.getLogger(__name__)
 
@@ -61,14 +62,55 @@ class AssistantController:
 
         self._cancel_record = threading.Event()
         self._cancel_play = threading.Event()
+        self._filler_cancel = threading.Event()
+        self._filler_thread: threading.Thread | None = None
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pi_ast")
         self._record_future: Future | None = None
         self._conversation_id = 0
         self._system_message = build_system_message(settings)
 
     def close(self) -> None:
+        self._stop_thinking_fillers()
         self._executor.shutdown(wait=False, cancel_futures=True)
         self.memory.close()
+
+    def _stop_thinking_fillers(self) -> None:
+        self._filler_cancel.set()
+        th = self._filler_thread
+        self._filler_thread = None
+        if th is not None and th.is_alive():
+            th.join(timeout=2.5)
+
+    def _start_thinking_fillers(self) -> None:
+        if not self.settings.voice_fillers_enabled:
+            return
+        self._stop_thinking_fillers()
+        self._filler_cancel.clear()
+        th = threading.Thread(
+            target=self._thinking_filler_runner,
+            name="voice_fillers",
+            daemon=True,
+        )
+        self._filler_thread = th
+        th.start()
+
+    def _thinking_filler_runner(self) -> None:
+        settings = self.settings
+        for phrase in (random_ack(), random_thinking()):
+            if self._filler_cancel.is_set():
+                return
+            path: Path | None = None
+            try:
+                path = synthesize(settings, phrase)
+                play_wav(path, settings, cancel_event=self._filler_cancel)
+            except Exception as e:
+                log.debug("Voice filler skipped: %s", e)
+            finally:
+                if path is not None:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
 
     def _get_state_locked(self) -> AssistantState:
         with self._lock:
@@ -171,7 +213,11 @@ class AssistantController:
         self._cancel_record.clear()
         self._cancel_play.clear()
         self.rms = RmsRingBuffer(maxlen=64)
-        self._set_state(AssistantState.LISTENING, "Listening...", "Speak now")
+        self._set_state(
+            AssistantState.LISTENING,
+            "Listening…",
+            "Speak when you're ready.",
+        )
         idle = timedelta(minutes=self.settings.session_idle_minutes)
         self._conversation_id = self.memory.get_or_create_conversation(idle)
 
@@ -202,7 +248,12 @@ class AssistantController:
             log.exception("Recording failed: %s", e)
             self._enter_error_state("I couldn't hear you — mic problem.", e)
             return
-        self._set_state(AssistantState.THINKING, "Thinking...", "")
+        self._set_state(
+            AssistantState.THINKING,
+            "Thinking…",
+            "",
+        )
+        self._start_thinking_fillers()
         pipe = self._executor.submit(self._pipeline, wav)
         pipe.add_done_callback(self._on_pipeline_done)
 
@@ -237,6 +288,7 @@ class AssistantController:
     def _on_pipeline_done(self, fut: Future) -> None:
         if self._get_state_locked() != AssistantState.THINKING:
             return
+        self._stop_thinking_fillers()
         try:
             wav_path, reply, _user_text = fut.result()
         except Exception as e:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import sys
 import time
 
@@ -75,16 +76,26 @@ def run_ui() -> None:
     face = FaceView(settings.screen_width, settings.screen_height)
     ctrl = AssistantController(settings)
 
-    running = True
+    run_ok = [True]
+
+    def _stop_ui(*_args: object) -> None:
+        run_ok[0] = False
+
+    signal.signal(signal.SIGINT, _stop_ui)
     try:
-        while running:
+        signal.signal(signal.SIGTERM, _stop_ui)
+    except (AttributeError, ValueError):
+        pass
+
+    try:
+        while run_ok[0]:
             now = time.monotonic()
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    running = False
+                    run_ok[0] = False
                 elif event.type == pygame.KEYDOWN:
                     if event.key in (pygame.K_ESCAPE, pygame.K_q):
-                        running = False
+                        run_ok[0] = False
                     elif event.key == pygame.K_r and ctrl.state == AssistantState.ERROR:
                         ctrl.dismiss_error()
                     elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
@@ -100,6 +111,13 @@ def run_ui() -> None:
             clock.tick(60)
     finally:
         ctrl.close()
+        try:
+            screen.fill((0, 0, 0))
+            pygame.display.flip()
+            pygame.time.wait(30)
+        except Exception:
+            pass
+        pygame.display.quit()
         pygame.quit()
 
 
