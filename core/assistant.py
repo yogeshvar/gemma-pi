@@ -16,7 +16,7 @@ from config import Settings
 
 from .audio_envelope import wav_envelope
 from .audio_io import RmsRingBuffer, play_wav, record_until_silence
-from .llm import chat
+from .llm import chat, chat_with_tools
 from .memory import MemoryStore
 from .prompts import build_system_message
 from .stt import transcribe
@@ -195,7 +195,10 @@ class AssistantController:
             {"role": "system", "content": self._system_message},
             *ctx,
         ]
-        reply = chat(self.settings, messages, stream=True)
+        if self.settings.web_search_enabled:
+            reply = chat_with_tools(self.settings, messages)
+        else:
+            reply = chat(self.settings, messages, stream=True)
         if not reply:
             reply = "I didn't catch that."
         self.memory.add_turn(self._conversation_id, "assistant", reply)

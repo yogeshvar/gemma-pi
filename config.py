@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +20,16 @@ class Settings(BaseSettings):
     # Ollama
     ollama_host: str = Field(default="http://127.0.0.1:11434")
     ollama_model: str = Field(default="gemma3:1b")
+
+    # Web search (optional; requires network + provider credentials unless provider is ddgs)
+    web_search_enabled: bool = Field(default=False)
+    web_search_provider: Literal["brave", "tavily", "ddgs"] = Field(default="ddgs")
+    brave_api_key: str = Field(default="", description="Brave Search API subscription token")
+    tavily_api_key: str = Field(default="", description="Tavily API key")
+    web_search_max_results: int = Field(default=5, ge=1, le=20)
+    web_search_max_chars: int = Field(default=6000, ge=500, le=50_000)
+    web_search_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+    web_search_max_tool_rounds: int = Field(default=3, ge=1, le=10)
     # Appended after merged markdown under prompt_dir (quick experiments / overrides).
     system_prompt: str = Field(default="")
 

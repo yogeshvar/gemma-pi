@@ -5,6 +5,7 @@ webrtcvad>=2.0.10
 setuptools>=69.0.0,<81
 ollama>=0.1.7
 requests>=2.31.0
+duckduckgo-search>=6.0.0
 pydantic-settings>=2.0.0
 rich>=13.0.0
 audioop-lts>=0.2.1; python_version>="3.13"

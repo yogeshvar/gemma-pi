@@ -33,8 +33,12 @@ All app keys use the prefix **`PI_ASSISTANT_`** (see [`config.py`](config.py)). 
 |----------|---------|
 | `PI_ASSISTANT_OLLAMA_HOST` | Ollama base URL (default `http://127.0.0.1:11434`) |
 | `PI_ASSISTANT_OLLAMA_MODEL` | Model tag (default `gemma3:1b`) |
+| `PI_ASSISTANT_WEB_SEARCH_ENABLED` | `true` / `false` — expose Ollama **`web_search`** tool (needs network; see below) |
+| `PI_ASSISTANT_WEB_SEARCH_PROVIDER` | `ddgs` (default, no API key), `brave`, or `tavily` |
+| `PI_ASSISTANT_BRAVE_API_KEY` / `PI_ASSISTANT_TAVILY_API_KEY` | Provider keys when using Brave or Tavily |
+| `PI_ASSISTANT_WEB_SEARCH_MAX_RESULTS` / `MAX_CHARS` / `TIMEOUT_SECONDS` / `MAX_TOOL_ROUNDS` | Search snippet size and tool-loop cap |
 | `PI_ASSISTANT_PROMPT_DIR` | Folder of `*.md` merged into the system message (default `./prompts`) |
-| `PI_ASSISTANT_SYSTEM_PROMPT` | Extra system text **appended after** merged prompt files |
+| `PI_ASSISTANT_SYSTEM_PROMPT` | Extra system text **appended after** merged prompt files and optional web prompts |
 | `PI_ASSISTANT_MEMORY_DB_PATH` | SQLite file for conversations (default `~/.pi-assistant/memory.db`) |
 | `PI_ASSISTANT_WHISPER_CLI` / `PI_ASSISTANT_WHISPER_MODEL` | whisper.cpp binary + model |
 | `PI_ASSISTANT_PIPER_BIN` / `PI_ASSISTANT_PIPER_VOICE` | Piper binary + ONNX voice |
@@ -42,11 +46,27 @@ All app keys use the prefix **`PI_ASSISTANT_`** (see [`config.py`](config.py)). 
 
 Deploy from a laptop: set `PI_HOST` in `.env`, run [`./deploy.sh`](deploy.sh).
 
+## Web search (optional, online)
+
+When **`PI_ASSISTANT_WEB_SEARCH_ENABLED=true`**, Pi registers a **`web_search`** tool with Ollama: the model can search the web for time-sensitive or factual questions. This **requires network access** on the device running the app (unlike the default offline stack).
+
+- **Models:** Small tags like `gemma3:1b` may handle tools poorly; prefer tool-capable models (e.g. **Llama 3.2**, **Mistral**, **Qwen 2.5**) when web search is on.
+- **Providers:** Default **`ddgs`** uses the `duckduckgo-search` package (no API key). For production, consider **Brave** or **Tavily** with keys in `.env`.
+- **Prompts:** Markdown under [`prompts/web/`](prompts/web/) is merged into the **system** message only when web search is enabled (grounding, privacy, voice UX). Restart the app after changing `.env` so the merged system prompt matches the flag.
+
 ## Prompts (always sent to Gemma)
 
 Markdown files under [`prompts/`](prompts/) are read in **lexicographic order**, joined with `---` separators, and sent as the **system** message to Ollama. Files named `README.md` or starting with **`_`** are skipped. If the directory is missing or empty, a small built-in fallback is used.
 
 Edit [`prompts/01_identity.md`](prompts/01_identity.md) and [`prompts/02_style.md`](prompts/02_style.md), or point `PI_ASSISTANT_PROMPT_DIR` at another folder.
+
+## Tests
+
+```bash
+source venv/bin/activate   # or .venv/bin/activate
+pip install -r requirements.txt
+PYTHONPATH=. python -m unittest discover -s tests -p 'test_*.py' -v
+```
 
 ## Memory (SQLite “memory file”)
 
