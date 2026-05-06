@@ -113,6 +113,7 @@ def record_until_silence(
     heard_speech = False
     silence_run = 0
     total_native = 0
+    exit_reason = "unknown"
 
     def append_16k(chunk: np.ndarray) -> None:
         if chunk.size:
@@ -126,14 +127,23 @@ def record_until_silence(
         "device": in_dev,
     }
 
+    log.info(
+        "Recording: device_sr=%s block=%s max_record_s=%s",
+        device_sr,
+        block,
+        settings.max_record_seconds,
+    )
     with sd.InputStream(**stream_kwargs) as stream:
         start = time.monotonic()
         while total_native < max_samples_native:
             if cancel_event and cancel_event.is_set():
+                exit_reason = "cancelled"
                 raise RuntimeError("recording_cancelled")
             try:
                 data, _overflowed = stream.read(block)
-            except Exception:
+            except Exception as e:
+                log.warning("Mic stream read failed (stopping capture): %s", e)
+                exit_reason = "read_error"
                 break
             mono = data[:, 0].copy() if data.ndim > 1 else data.reshape(-1).copy()
             total_native += mono.size
@@ -162,12 +172,27 @@ def record_until_silence(
                 else:
                     silence_run += 1
                     if silence_run >= silence_frames_needed:
+                        exit_reason = "silence_after_speech"
                         break
 
             if time.monotonic() - start > settings.max_record_seconds:
+                exit_reason = "max_wall_seconds"
                 break
 
+        if exit_reason == "unknown" and total_native >= max_samples_native:
+            exit_reason = "max_samples"
+
     append_16k(resampler.end())
+
+    wall = time.monotonic() - start
+    samples_16k = len(buffer_16k) // 2 if buffer_16k else 0
+    log.info(
+        "Recording done: reason=%s wall=%.2fs heard_speech=%s samples_16k=%d",
+        exit_reason,
+        wall,
+        heard_speech,
+        samples_16k,
+    )
 
     if not buffer_16k:
         raise RuntimeError("no_audio_captured")
@@ -203,12 +228,16 @@ def play_wav(
         "device": out_dev,
     }
 
+    dur_s = len(audio) / float(sr) if sr else 0.0
+    t0 = time.monotonic()
+    log.info("Playback: %s @ %d Hz, ~%.2fs of audio", path.name, sr, dur_s)
     with sd.OutputStream(**stream_kwargs) as stream:
         chunk = int(sr * 0.05)
         for i in range(0, len(audio), chunk):
             if cancel_event and cancel_event.is_set():
                 raise RuntimeError("playback_cancelled")
             stream.write(audio[i : i + chunk].reshape(-1, 1))
+    log.info("Playback finished in %.2fs", time.monotonic() - t0)
 
 
 class RmsRingBuffer:

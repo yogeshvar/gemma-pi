@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from config import Settings
@@ -46,7 +47,9 @@ def synthesize(settings: Settings, text: str) -> Path:
         "--output_file",
         str(out),
     ]
-    log.debug("Running TTS: %s", " ".join(cmd))
+    t0 = time.monotonic()
+    log.info("TTS: piper (%d chars) → %s", len(text), out.name)
+    log.debug("TTS cmd: %s", " ".join(cmd))
     proc = subprocess.run(
         cmd,
         input=text.encode("utf-8"),
@@ -58,4 +61,6 @@ def synthesize(settings: Settings, text: str) -> Path:
         raise RuntimeError(f"Piper failed ({proc.returncode}): {err.strip()}")
     if not out.is_file() or out.stat().st_size < 64:
         raise RuntimeError("Piper produced empty or missing WAV")
+    sz = out.stat().st_size
+    log.info("TTS: done in %.2fs (%d bytes)", time.monotonic() - t0, sz)
     return out

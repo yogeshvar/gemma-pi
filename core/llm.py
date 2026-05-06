@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, Iterable, Mapping, Sequence, cast
 
 from ollama import Client
@@ -82,6 +83,13 @@ def _tool_args(arguments: Mapping[str, Any] | str | None) -> dict[str, Any]:
 def chat(settings: Settings, messages: list[dict[str, str]], *, stream: bool = True) -> str:
     """Return full assistant text. Streams from Ollama by default for lower time-to-first-token."""
     client = _client(settings)
+    t0 = time.monotonic()
+    log.info(
+        "LLM: chat model=%r host=%s stream=%s",
+        settings.ollama_model,
+        settings.ollama_host,
+        stream,
+    )
     if stream:
         parts: list[str] = []
         for chunk in client.chat(
@@ -93,7 +101,9 @@ def chat(settings: Settings, messages: list[dict[str, str]], *, stream: bool = T
             c = msg.get("content")
             if c:
                 parts.append(c)
-        return "".join(parts).strip()
+        text = "".join(parts).strip()
+        log.info("LLM: reply in %.2fs (%d chars)", time.monotonic() - t0, len(text))
+        return text
 
     resp = client.chat(
         model=settings.ollama_model,
@@ -101,7 +111,9 @@ def chat(settings: Settings, messages: list[dict[str, str]], *, stream: bool = T
         stream=False,
     )
     msg = resp.get("message") or {}
-    return str(msg.get("content", "")).strip()
+    text = str(msg.get("content", "")).strip()
+    log.info("LLM: reply in %.2fs (%d chars)", time.monotonic() - t0, len(text))
+    return text
 
 
 def chat_stream_chunks(
@@ -130,6 +142,13 @@ def chat_with_tools(
     client = _client(settings)
     tools: list[Any] = [WEB_SEARCH_TOOL]
     messages_work: list[Any] = [dict(m) for m in messages]
+    t0 = time.monotonic()
+    log.info(
+        "LLM: chat_with_tools model=%r host=%s max_rounds=%s",
+        settings.ollama_model,
+        settings.ollama_host,
+        settings.web_search_max_tool_rounds,
+    )
 
     for round_i in range(settings.web_search_max_tool_rounds):
         try:
@@ -155,7 +174,9 @@ def chat_with_tools(
 
         if not tool_calls:
             text = (msg.content or "").strip()
-            return text or "I didn't catch that."
+            text = text or "I didn't catch that."
+            log.info("LLM: tools done in %.2fs (%d chars)", time.monotonic() - t0, len(text))
+            return text
 
         assistant_dict = msg.model_dump(exclude_none=True)
         messages_work.append(assistant_dict)
@@ -178,6 +199,7 @@ def chat_with_tools(
 
         log.debug("web_search tool round %d completed", round_i + 1)
 
+    log.warning("LLM: web_search max tool rounds exhausted after %.2fs", time.monotonic() - t0)
     return (
         "I used the search tool too many times for one question. "
         "Please ask something simpler or more specific."

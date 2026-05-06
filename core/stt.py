@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from config import Settings
@@ -35,7 +36,13 @@ def transcribe(settings: Settings, wav_path: Path) -> str:
         "-nt",
         "-np",
     ]
-    log.debug("Running STT: %s", " ".join(cmd))
+    t0 = time.monotonic()
+    try:
+        sz = wav_path.stat().st_size
+    except OSError:
+        sz = -1
+    log.info("STT: whisper-cli on %s (~%d bytes)", wav_path.name, sz)
+    log.debug("STT cmd: %s", " ".join(cmd))
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         log.error("whisper-cli stderr: %s", proc.stderr)
@@ -55,4 +62,6 @@ def transcribe(settings: Settings, wav_path: Path) -> str:
         except OSError:
             pass
 
-    return text.strip()
+    out = text.strip()
+    log.info("STT: finished in %.2fs (%d chars)", time.monotonic() - t0, len(out))
+    return out

@@ -27,6 +27,13 @@ from .voice_fillers import random_ack, random_thinking
 log = logging.getLogger(__name__)
 
 
+def _log_snippet(text: str, max_len: int = 160) -> str:
+    t = text.replace("\n", " ").strip()
+    if len(t) <= max_len:
+        return t
+    return t[: max_len - 3] + "..."
+
+
 class AssistantState(Enum):
     IDLE = auto()
     LISTENING = auto()
@@ -70,6 +77,7 @@ class AssistantController:
         self._system_message = build_system_message(settings)
 
     def close(self) -> None:
+        log.info("Assistant shutdown (stopping workers)")
         self._cancel_record.set()
         self._cancel_play.set()
         self._stop_thinking_fillers()
@@ -186,25 +194,34 @@ class AssistantController:
     def on_enter_from_idle(self) -> None:
         st = self._get_state_locked()
         if st == AssistantState.ERROR:
+            log.info("Enter: clearing ERROR and starting listen")
             self.dismiss_error()
             self._begin_listening()
             return
         if st != AssistantState.IDLE:
+            log.info("Enter ignored (state=%s, need IDLE or ERROR)", st.name)
             return
+        log.info("Enter: starting listen from IDLE")
         self._begin_listening()
 
     def on_tap(self) -> None:
         st = self._get_state_locked()
         if st == AssistantState.ERROR:
+            log.info("Tap: clearing ERROR and starting listen")
             self.dismiss_error()
             self._begin_listening()
             return
         if st == AssistantState.IDLE:
+            log.info("Tap: starting listen")
             self._begin_listening()
         elif st == AssistantState.LISTENING:
+            log.info("Tap: cancel listening")
             self._cancel_listening()
         elif st == AssistantState.SPEAKING:
+            log.info("Tap: cancel playback")
             self._cancel_play.set()
+        else:
+            log.info("Tap ignored (state=%s)", st.name)
 
     def forget_last_exchange(self) -> None:
         with self._lock:
@@ -224,6 +241,12 @@ class AssistantController:
         )
         idle = timedelta(minutes=self.settings.session_idle_minutes)
         self._conversation_id = self.memory.get_or_create_conversation(idle)
+        log.info(
+            "Listening: conversation_id=%s max_record_s=%s fillers=%s",
+            self._conversation_id,
+            self.settings.max_record_seconds,
+            self.settings.voice_fillers_enabled,
+        )
 
         def job() -> Path:
             return record_until_silence(
@@ -237,21 +260,32 @@ class AssistantController:
         self._record_future.add_done_callback(self._on_record_done)
 
     def _cancel_listening(self) -> None:
+        log.info("Listen cancelled by user → IDLE")
         self._cancel_record.set()
         self._set_state(AssistantState.IDLE, self._idle_caption(), "")
 
     def _on_record_done(self, fut: Future) -> None:
         if self._get_state_locked() != AssistantState.LISTENING:
+            log.info(
+                "Record callback skipped (state=%s, not LISTENING)",
+                self._get_state_locked().name,
+            )
             return
         try:
             wav = fut.result()
         except Exception as e:
             if str(e) == "recording_cancelled":
+                log.info("Recording cancelled → IDLE")
                 self._set_state(AssistantState.IDLE, self._idle_caption(), "")
                 return
             log.exception("Recording failed: %s", e)
             self._enter_error_state("I couldn't hear you — mic problem.", e)
             return
+        try:
+            wsz = wav.stat().st_size
+        except OSError:
+            wsz = -1
+        log.info("Recording saved → THINKING: %s (%d bytes)", wav.name, wsz)
         self._set_state(
             AssistantState.THINKING,
             "Thinking…",
@@ -262,9 +296,11 @@ class AssistantController:
         pipe.add_done_callback(self._on_pipeline_done)
 
     def _pipeline(self, wav_path: Path) -> tuple[Path, str, str]:
+        t0 = time.monotonic()
         user_text = transcribe(self.settings, wav_path)
         if not user_text.strip():
             user_text = "(silence)"
+        log.info("User text: %r", _log_snippet(user_text, 200))
         self.memory.add_turn(self._conversation_id, "user", user_text)
 
         ctx = self.memory.get_context_messages(
@@ -280,6 +316,12 @@ class AssistantController:
             reply = chat(self.settings, messages, stream=True)
         if not reply:
             reply = "I didn't catch that."
+        log.info(
+            "Assistant text (%d chars, %.2fs since pipeline start): %r",
+            len(reply),
+            time.monotonic() - t0,
+            _log_snippet(reply, 200),
+        )
         self.memory.add_turn(self._conversation_id, "assistant", reply)
 
         out_wav = synthesize(self.settings, reply)
@@ -287,10 +329,19 @@ class AssistantController:
             wav_path.unlink(missing_ok=True)
         except OSError:
             pass
+        log.info(
+            "Pipeline complete in %.2fs (reply wav=%s)",
+            time.monotonic() - t0,
+            out_wav.name,
+        )
         return out_wav, reply, user_text
 
     def _on_pipeline_done(self, fut: Future) -> None:
         if self._get_state_locked() != AssistantState.THINKING:
+            log.info(
+                "Pipeline callback skipped (state=%s, not THINKING)",
+                self._get_state_locked().name,
+            )
             return
         self._stop_thinking_fillers()
         try:
@@ -300,6 +351,7 @@ class AssistantController:
             self._enter_error_state("Oh no — I'm a bit broken right now.", e)
             return
 
+        log.info("Starting playback: %s", wav_path.name)
         env = wav_envelope(wav_path, bins=48)
         speak_dur = 3.0
         try:
@@ -338,4 +390,8 @@ class AssistantController:
             log.error("Playback error: %s", err)
             self._enter_error_state("Couldn't play my reply — speaker problem?", err)
             return
+        if err and str(err) == "playback_cancelled":
+            log.info("Playback cancelled → IDLE")
+        else:
+            log.info("Playback finished → IDLE")
         self._set_state(AssistantState.IDLE, self._idle_caption(), "")
