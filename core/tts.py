@@ -12,17 +12,37 @@ from config import Settings
 log = logging.getLogger(__name__)
 
 
+def _resolve_piper_executable(path: Path) -> Path:
+    """
+    Piper is often unpacked as a directory containing a `piper` executable
+    (e.g. ~/piper/piper/piper) while PI_ASSISTANT_PIPER_BIN may point at the folder.
+    """
+    if path.is_file():
+        return path
+    nested = path / "piper"
+    if nested.is_file():
+        return nested
+    raise FileNotFoundError(
+        f"Piper binary not found at {path} or {nested}. "
+        "Set PI_ASSISTANT_PIPER_BIN to the piper executable "
+        "(e.g. /home/you/piper/piper/piper)."
+    )
+
+
 def synthesize(settings: Settings, text: str) -> Path:
-    if not settings.piper_bin.is_file():
-        raise FileNotFoundError(f"Piper binary not found: {settings.piper_bin}")
-    if not settings.piper_voice.is_file():
-        raise FileNotFoundError(f"Piper voice not found: {settings.piper_voice}")
+    piper_exe = _resolve_piper_executable(settings.piper_bin.expanduser().resolve())
+    if not settings.piper_voice.expanduser().resolve().is_file():
+        raise FileNotFoundError(
+            f"Piper voice not found: {settings.piper_voice}. "
+            "Set PI_ASSISTANT_PIPER_VOICE to the .onnx file path."
+        )
 
     out = Path(tempfile.mkstemp(suffix=".wav", prefix="piper_")[1])
+    voice = settings.piper_voice.expanduser().resolve()
     cmd = [
-        str(settings.piper_bin),
+        str(piper_exe),
         "--model",
-        str(settings.piper_voice),
+        str(voice),
         "--output_file",
         str(out),
     ]

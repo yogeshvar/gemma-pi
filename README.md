@@ -22,7 +22,7 @@ python main.py              # UI (fullscreen on Pi; use PI_ASSISTANT_FULLSCREEN=
 python main.py --cli       # terminal loop, no Pygame
 ```
 
-- **UI**: tap to talk, **Enter** from idle, **Esc** / **Q** quit, **f** (idle) forgets last exchange.
+- **UI**: tap to talk, **Enter** from idle, **Esc** / **Q** quit, **f** (idle) forgets last exchange. On errors the face turns **rose** with a short message: **tap** or **Enter** to try again, **R** to dismiss to idle.
 - **CLI**: empty line = listen; `f` = forget; `q` = quit.
 
 ## Configuration (`.env`)

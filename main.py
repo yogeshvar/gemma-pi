@@ -42,12 +42,17 @@ def run_cli() -> None:
                     print("Forgot last exchange.")
                 continue
             ctrl.on_enter_from_idle()
-            while ctrl.state != AssistantState.IDLE:
+            while ctrl.state not in (AssistantState.IDLE, AssistantState.ERROR):
                 snap = ctrl.ui_snapshot()
                 tail = (snap.subtitle or "")[:72]
                 print(f"\r{snap.caption}  {tail:<72}", end="", flush=True)
                 time.sleep(0.08)
             print()
+            if ctrl.state == AssistantState.ERROR:
+                snap = ctrl.ui_snapshot()
+                print(f"\n{snap.caption}\n{snap.subtitle}\n")
+                input("Press Enter to clear error and return to menu: ")
+                ctrl.dismiss_error()
     finally:
         ctrl.close()
 
@@ -80,6 +85,8 @@ def run_ui() -> None:
                 elif event.type == pygame.KEYDOWN:
                     if event.key in (pygame.K_ESCAPE, pygame.K_q):
                         running = False
+                    elif event.key == pygame.K_r and ctrl.state == AssistantState.ERROR:
+                        ctrl.dismiss_error()
                     elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         ctrl.on_enter_from_idle()
                     elif event.key == pygame.K_f and ctrl.state == AssistantState.IDLE:

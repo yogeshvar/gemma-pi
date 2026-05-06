@@ -31,6 +31,9 @@ def palette_for(state: AssistantState) -> Palette:
     elif state == AssistantState.SPEAKING:
         face = (198, 224, 210)
         acc = (90, 55, 75)
+    elif state == AssistantState.ERROR:
+        face = (235, 198, 198)
+        acc = (140, 55, 55)
     else:
         face = (178, 236, 214)
         acc = (28, 78, 72)

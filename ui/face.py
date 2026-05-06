@@ -107,6 +107,8 @@ class FaceView:
                 return 0.12
             if frame.state == AssistantState.LISTENING:
                 return 0.06
+            if frame.state == AssistantState.ERROR:
+                return 0.03
             return 0.04
         idx = int(frame.speak_progress * (len(frame.envelope) - 1))
         return float(frame.envelope[idx])

@@ -31,6 +31,7 @@ class AssistantState(Enum):
     LISTENING = auto()
     THINKING = auto()
     SPEAKING = auto()
+    ERROR = auto()
 
 
 @dataclass
@@ -122,13 +123,36 @@ class AssistantController:
     def _idle_caption(self) -> str:
         return "Tap the screen or press Enter to talk"
 
+    def dismiss_error(self) -> None:
+        """Leave ERROR and return to normal idle (no new listen)."""
+        if self._get_state_locked() != AssistantState.ERROR:
+            return
+        self._set_state(AssistantState.IDLE, self._idle_caption(), "")
+
+    def _enter_error_state(self, headline: str, exc: Exception | str) -> None:
+        detail = str(exc).strip() if not isinstance(exc, str) else exc
+        if len(detail) > 140:
+            detail = detail[:137] + "..."
+        hint = "Tap the face to try again, or press R to reset."
+        sub = f"{detail}  {hint}" if detail else hint
+        self._set_state(AssistantState.ERROR, headline, sub)
+
     def on_enter_from_idle(self) -> None:
-        if self._get_state_locked() != AssistantState.IDLE:
+        st = self._get_state_locked()
+        if st == AssistantState.ERROR:
+            self.dismiss_error()
+            self._begin_listening()
+            return
+        if st != AssistantState.IDLE:
             return
         self._begin_listening()
 
     def on_tap(self) -> None:
         st = self._get_state_locked()
+        if st == AssistantState.ERROR:
+            self.dismiss_error()
+            self._begin_listening()
+            return
         if st == AssistantState.IDLE:
             self._begin_listening()
         elif st == AssistantState.LISTENING:
@@ -176,7 +200,7 @@ class AssistantController:
                 self._set_state(AssistantState.IDLE, self._idle_caption(), "")
                 return
             log.exception("Recording failed: %s", e)
-            self._set_state(AssistantState.IDLE, self._idle_caption(), f"Mic error: {e}")
+            self._enter_error_state("I couldn't hear you — mic problem.", e)
             return
         self._set_state(AssistantState.THINKING, "Thinking...", "")
         pipe = self._executor.submit(self._pipeline, wav)
@@ -217,7 +241,7 @@ class AssistantController:
             wav_path, reply, _user_text = fut.result()
         except Exception as e:
             log.exception("Pipeline failed: %s", e)
-            self._set_state(AssistantState.IDLE, self._idle_caption(), str(e))
+            self._enter_error_state("Oh no — I'm a bit broken right now.", e)
             return
 
         env = wav_envelope(wav_path, bins=48)
@@ -250,10 +274,12 @@ class AssistantController:
 
     def _on_play_done(self, fut: Future, wav_path: Path) -> None:
         err = fut.exception()
-        if err and str(err) != "playback_cancelled":
-            log.error("Playback error: %s", err)
         try:
             wav_path.unlink(missing_ok=True)
         except OSError:
             pass
+        if err and str(err) != "playback_cancelled":
+            log.error("Playback error: %s", err)
+            self._enter_error_state("Couldn't play my reply — speaker problem?", err)
+            return
         self._set_state(AssistantState.IDLE, self._idle_caption(), "")
