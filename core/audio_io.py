@@ -21,6 +21,10 @@ log = logging.getLogger(__name__)
 
 RmsCallback = Callable[[float], None] | None
 
+
+def _tag_pfx(tag: str | None) -> str:
+    return f"[{tag}] " if tag else ""
+
 _ERR_NO_INPUT_DEFAULT = (
     "No default audio input device (PortAudio reports default index -1). "
     "Use a graphical session with PipeWire/Pulse running, set PI_ASSISTANT_INPUT_DEVICE "
@@ -92,6 +96,7 @@ def record_until_silence(
     *,
     rms_callback: RmsCallback = None,
     cancel_event: threading.Event | None = None,
+    log_tag: str | None = None,
 ) -> Path:
     """
     Record from default input until silence after speech, or max duration.
@@ -128,7 +133,8 @@ def record_until_silence(
     }
 
     log.info(
-        "Recording: device_sr=%s block=%s max_record_s=%s",
+        "%sRecording: device_sr=%s block=%s max_record_s=%s",
+        _tag_pfx(log_tag),
         device_sr,
         block,
         settings.max_record_seconds,
@@ -142,7 +148,11 @@ def record_until_silence(
             try:
                 data, _overflowed = stream.read(block)
             except Exception as e:
-                log.warning("Mic stream read failed (stopping capture): %s", e)
+                log.warning(
+                    "%sMic stream read failed (stopping capture): %s",
+                    _tag_pfx(log_tag),
+                    e,
+                )
                 exit_reason = "read_error"
                 break
             mono = data[:, 0].copy() if data.ndim > 1 else data.reshape(-1).copy()
@@ -187,7 +197,8 @@ def record_until_silence(
     wall = time.monotonic() - start
     samples_16k = len(buffer_16k) // 2 if buffer_16k else 0
     log.info(
-        "Recording done: reason=%s wall=%.2fs heard_speech=%s samples_16k=%d",
+        "%sRecording done: reason=%s wall=%.2fs heard_speech=%s samples_16k=%d",
+        _tag_pfx(log_tag),
         exit_reason,
         wall,
         heard_speech,
@@ -208,6 +219,7 @@ def play_wav(
     settings: Settings,
     *,
     cancel_event: threading.Event | None = None,
+    log_tag: str | None = None,
 ) -> None:
     with wave.open(str(path), "rb") as wf:
         ch = wf.getnchannels()
@@ -230,14 +242,20 @@ def play_wav(
 
     dur_s = len(audio) / float(sr) if sr else 0.0
     t0 = time.monotonic()
-    log.info("Playback: %s @ %d Hz, ~%.2fs of audio", path.name, sr, dur_s)
+    log.info(
+        "%sPlayback: %s @ %d Hz, ~%.2fs of audio",
+        _tag_pfx(log_tag),
+        path.name,
+        sr,
+        dur_s,
+    )
     with sd.OutputStream(**stream_kwargs) as stream:
         chunk = int(sr * 0.05)
         for i in range(0, len(audio), chunk):
             if cancel_event and cancel_event.is_set():
                 raise RuntimeError("playback_cancelled")
             stream.write(audio[i : i + chunk].reshape(-1, 1))
-    log.info("Playback finished in %.2fs", time.monotonic() - t0)
+    log.info("%sPlayback finished in %.2fs", _tag_pfx(log_tag), time.monotonic() - t0)
 
 
 class RmsRingBuffer:

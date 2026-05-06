@@ -37,6 +37,8 @@ class ChatWithToolsTests(unittest.TestCase):
         self.assertEqual(out, "It will be sunny.")
         sw.assert_called_once()
         self.assertEqual(mock_client.chat.call_count, 2)
+        self.assertIs(mock_client.chat.call_args_list[0].kwargs.get("think"), False)
+        self.assertIs(mock_client.chat.call_args_list[1].kwargs.get("think"), False)
         second_call_kwargs = mock_client.chat.call_args_list[1].kwargs
         self.assertIn("messages", second_call_kwargs)
         msgs = second_call_kwargs["messages"]
@@ -59,15 +61,16 @@ class ChatWithToolsTests(unittest.TestCase):
                 out = chat_with_tools(settings, [{"role": "user", "content": "x"}])
         sw.assert_not_called()
         self.assertEqual(out, "Done.")
+        self.assertIs(mock_client.chat.call_args.kwargs.get("think"), False)
 
     def test_falls_back_to_plain_chat_when_model_rejects_tools(self) -> None:
-        settings = Settings(web_search_max_tool_rounds=3, ollama_model="qwen3:1.7b")
+        settings = Settings(web_search_max_tool_rounds=3, ollama_model="qwen3.5:0.8b")
 
         class FakeResponseError(Exception):
             status_code = 400
 
         err = FakeResponseError(
-            "registry.ollama.ai/library/qwen3:1.7b does not support tools (status code: 400)"
+            "registry.ollama.ai/library/qwen3.5:0.8b does not support tools (status code: 400)"
         )
 
         mock_client = MagicMock()
@@ -88,6 +91,7 @@ class ChatWithToolsTests(unittest.TestCase):
             [{"role": "system", "content": "s"}, {"role": "user", "content": "hi"}],
         )
         self.assertEqual(mock_client.chat.call_count, 1)
+        self.assertIs(mock_client.chat.call_args.kwargs.get("think"), False)
 
 
 if __name__ == "__main__":

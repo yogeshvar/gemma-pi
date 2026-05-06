@@ -41,6 +41,70 @@ def _client(settings: Settings) -> Client:
     return Client(host=settings.ollama_host)
 
 
+def _model_tags_from_list_response(resp: Any) -> list[str]:
+    """Installed model tags from Client.list(), sorted for stable display and default pick."""
+    names: list[str] = []
+    for item in getattr(resp, "models", []) or []:
+        tag = getattr(item, "model", None)
+        if isinstance(tag, str) and tag.strip():
+            names.append(tag.strip())
+    return sorted(set(names))
+
+
+def sync_ollama_model_from_server(settings: Settings) -> None:
+    """
+    Query Ollama for installed tags and set ``settings.ollama_model``.
+
+    Preference: use configured tag if it appears in ``ollama list``; otherwise use the
+    first sorted installed tag (so you can swap models without editing .env).
+    """
+    client = _client(settings)
+    try:
+        resp = client.list()
+    except Exception as e:
+        log.warning(
+            "Ollama list() failed at %s (leaving model=%r): %s",
+            settings.ollama_host,
+            settings.ollama_model,
+            e,
+        )
+        return
+
+    names = _model_tags_from_list_response(resp)
+    if not names:
+        log.warning(
+            "Ollama at %s returned no models (leaving model=%r); run `ollama pull <tag>`",
+            settings.ollama_host,
+            settings.ollama_model,
+        )
+        return
+
+    log.info(
+        "Ollama at %s — installed: %s",
+        settings.ollama_host,
+        ", ".join(names),
+    )
+
+    pref = (settings.ollama_model or "").strip()
+    if pref and pref in names:
+        chosen = pref
+        log.info("Using Ollama model %r (matches configuration)", chosen)
+    elif pref:
+        chosen = names[0]
+        log.warning(
+            "Configured model %r is not installed; using %r instead",
+            pref,
+            chosen,
+        )
+    else:
+        chosen = names[0]
+        log.info(
+            "No model configured (empty PI_ASSISTANT_OLLAMA_MODEL); using %r",
+            chosen,
+        )
+    settings.ollama_model = chosen
+
+
 def _model_rejects_tools(exc: Exception) -> bool:
     """True when Ollama returns 400 because the model cannot use tools."""
     code = getattr(exc, "status_code", None)
@@ -66,6 +130,30 @@ def _messages_for_plain_chat(messages: Sequence[Mapping[str, Any]]) -> list[dict
     return out
 
 
+def _think_kw(settings: Settings) -> dict[str, Any]:
+    """Map ``Settings.ollama_think`` to Ollama ``Client.chat(..., think=...)`` (omit if None)."""
+    if settings.ollama_think is None:
+        return {}
+    return {"think": settings.ollama_think}
+
+
+def _chat_with_think_fallback(client: Client, settings: Settings, **kwargs: Any) -> Any:
+    """Call ``client.chat`` with ``think`` when configured; retry without on old ollama-python."""
+    extra = _think_kw(settings)
+    if not extra:
+        return client.chat(**kwargs)
+    try:
+        return client.chat(**kwargs, **extra)
+    except TypeError as e:
+        if "think" in str(e).lower():
+            log.warning(
+                "ollama Python package rejected `think` (install ollama>=0.4); retrying without: %s",
+                e,
+            )
+            return client.chat(**kwargs)
+        raise
+
+
 def _tool_args(arguments: Mapping[str, Any] | str | None) -> dict[str, Any]:
     if arguments is None:
         return {}
@@ -85,14 +173,17 @@ def chat(settings: Settings, messages: list[dict[str, str]], *, stream: bool = T
     client = _client(settings)
     t0 = time.monotonic()
     log.info(
-        "LLM: chat model=%r host=%s stream=%s",
+        "[pipeline] LLM: chat model=%r host=%s stream=%s think=%r",
         settings.ollama_model,
         settings.ollama_host,
         stream,
+        settings.ollama_think,
     )
     if stream:
         parts: list[str] = []
-        for chunk in client.chat(
+        for chunk in _chat_with_think_fallback(
+            client,
+            settings,
             model=settings.ollama_model,
             messages=messages,
             stream=True,
@@ -102,17 +193,27 @@ def chat(settings: Settings, messages: list[dict[str, str]], *, stream: bool = T
             if c:
                 parts.append(c)
         text = "".join(parts).strip()
-        log.info("LLM: reply in %.2fs (%d chars)", time.monotonic() - t0, len(text))
+        log.info(
+            "[pipeline] LLM: reply in %.2fs (%d chars)",
+            time.monotonic() - t0,
+            len(text),
+        )
         return text
 
-    resp = client.chat(
+    resp = _chat_with_think_fallback(
+        client,
+        settings,
         model=settings.ollama_model,
         messages=messages,
         stream=False,
     )
     msg = resp.get("message") or {}
     text = str(msg.get("content", "")).strip()
-    log.info("LLM: reply in %.2fs (%d chars)", time.monotonic() - t0, len(text))
+    log.info(
+        "[pipeline] LLM: reply in %.2fs (%d chars)",
+        time.monotonic() - t0,
+        len(text),
+    )
     return text
 
 
@@ -121,7 +222,9 @@ def chat_stream_chunks(
 ) -> Iterable[str]:
     """Yield content fragments as they arrive (reserved for streaming TTS)."""
     client = _client(settings)
-    for chunk in client.chat(
+    for chunk in _chat_with_think_fallback(
+        client,
+        settings,
         model=settings.ollama_model,
         messages=messages,
         stream=True,
@@ -144,15 +247,18 @@ def chat_with_tools(
     messages_work: list[Any] = [dict(m) for m in messages]
     t0 = time.monotonic()
     log.info(
-        "LLM: chat_with_tools model=%r host=%s max_rounds=%s",
+        "[pipeline] LLM: chat_with_tools model=%r host=%s max_rounds=%s think=%r",
         settings.ollama_model,
         settings.ollama_host,
         settings.web_search_max_tool_rounds,
+        settings.ollama_think,
     )
 
     for round_i in range(settings.web_search_max_tool_rounds):
         try:
-            resp = client.chat(
+            resp = _chat_with_think_fallback(
+                client,
+                settings,
                 model=settings.ollama_model,
                 messages=messages_work,
                 tools=tools,
@@ -175,7 +281,11 @@ def chat_with_tools(
         if not tool_calls:
             text = (msg.content or "").strip()
             text = text or "I didn't catch that."
-            log.info("LLM: tools done in %.2fs (%d chars)", time.monotonic() - t0, len(text))
+            log.info(
+                "[pipeline] LLM: tools done in %.2fs (%d chars)",
+                time.monotonic() - t0,
+                len(text),
+            )
             return text
 
         assistant_dict = msg.model_dump(exclude_none=True)
@@ -199,7 +309,10 @@ def chat_with_tools(
 
         log.debug("web_search tool round %d completed", round_i + 1)
 
-    log.warning("LLM: web_search max tool rounds exhausted after %.2fs", time.monotonic() - t0)
+    log.warning(
+        "[pipeline] LLM: web_search max tool rounds exhausted after %.2fs",
+        time.monotonic() - t0,
+    )
     return (
         "I used the search tool too many times for one question. "
         "Please ask something simpler or more specific."

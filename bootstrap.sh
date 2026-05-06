@@ -37,7 +37,7 @@ if [[ -f "$ROOT/.env" ]]; then
   set +a
 fi
 
-MODEL="${PI_ASSISTANT_OLLAMA_MODEL:-qwen3:1.7b}"
+MODEL="${PI_ASSISTANT_OLLAMA_MODEL:-qwen3.5:0.8b}"
 HOST="${PI_ASSISTANT_OLLAMA_HOST:-http://127.0.0.1:11434}"
 
 echo "==> Python venv + pip"

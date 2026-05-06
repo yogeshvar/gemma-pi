@@ -13,6 +13,10 @@ from config import Settings
 log = logging.getLogger(__name__)
 
 
+def _pfx(tag: str | None) -> str:
+    return f"[{tag}] " if tag else ""
+
+
 def _resolve_piper_executable(path: Path) -> Path:
     """
     Piper is often unpacked as a directory containing a `piper` executable
@@ -30,7 +34,9 @@ def _resolve_piper_executable(path: Path) -> Path:
     )
 
 
-def synthesize(settings: Settings, text: str) -> Path:
+def synthesize(
+    settings: Settings, text: str, *, log_tag: str | None = None
+) -> Path:
     piper_exe = _resolve_piper_executable(settings.piper_bin.expanduser().resolve())
     if not settings.piper_voice.expanduser().resolve().is_file():
         raise FileNotFoundError(
@@ -48,8 +54,13 @@ def synthesize(settings: Settings, text: str) -> Path:
         str(out),
     ]
     t0 = time.monotonic()
-    log.info("TTS: piper (%d chars) → %s", len(text), out.name)
-    log.debug("TTS cmd: %s", " ".join(cmd))
+    log.info(
+        "%sTTS: piper (%d chars) → %s",
+        _pfx(log_tag),
+        len(text),
+        out.name,
+    )
+    log.debug("%sTTS cmd: %s", _pfx(log_tag), " ".join(cmd))
     proc = subprocess.run(
         cmd,
         input=text.encode("utf-8"),
@@ -62,5 +73,10 @@ def synthesize(settings: Settings, text: str) -> Path:
     if not out.is_file() or out.stat().st_size < 64:
         raise RuntimeError("Piper produced empty or missing WAV")
     sz = out.stat().st_size
-    log.info("TTS: done in %.2fs (%d bytes)", time.monotonic() - t0, sz)
+    log.info(
+        "%sTTS: done in %.2fs (%d bytes)",
+        _pfx(log_tag),
+        time.monotonic() - t0,
+        sz,
+    )
     return out

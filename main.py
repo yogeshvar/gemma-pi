@@ -22,6 +22,9 @@ def _setup_logging(level: str) -> None:
         datefmt="[%X]",
         handlers=[RichHandler(rich_tracebacks=True)],
     )
+    # Ollama uses httpx; at DEBUG the console fills with connect/send/receive lines.
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def run_cli() -> None:

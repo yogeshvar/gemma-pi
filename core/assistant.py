@@ -16,7 +16,7 @@ from config import Settings
 
 from .audio_envelope import wav_envelope
 from .audio_io import RmsRingBuffer, play_wav, record_until_silence
-from .llm import chat, chat_with_tools
+from .llm import chat, chat_with_tools, sync_ollama_model_from_server
 from .memory import MemoryStore
 from .prompts import build_system_message
 from .stt import transcribe
@@ -55,6 +55,7 @@ class UIFrame:
 class AssistantController:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        sync_ollama_model_from_server(settings)
         self.memory = MemoryStore(settings.memory_db_path)
         self.vad = VoiceActivityDetector(settings)
         self.rms = RmsRingBuffer(maxlen=64)
@@ -113,8 +114,10 @@ class AssistantController:
                 return
             path: Path | None = None
             try:
-                path = synthesize(settings, phrase)
-                play_wav(path, settings, cancel_event=self._filler_cancel)
+                path = synthesize(settings, phrase, log_tag="filler")
+                play_wav(
+                    path, settings, cancel_event=self._filler_cancel, log_tag="filler"
+                )
             except Exception as e:
                 log.debug("Voice filler skipped: %s", e)
             finally:
@@ -254,6 +257,7 @@ class AssistantController:
                 self.vad,
                 rms_callback=self.rms.push,
                 cancel_event=self._cancel_record,
+                log_tag="listen",
             )
 
         self._record_future = self._executor.submit(job)
@@ -297,10 +301,13 @@ class AssistantController:
 
     def _pipeline(self, wav_path: Path) -> tuple[Path, str, str]:
         t0 = time.monotonic()
-        user_text = transcribe(self.settings, wav_path)
+        log.info(
+            "[pipeline] STT→LLM→TTS (overlaps [filler] ack/thinking audio while STT runs)"
+        )
+        user_text = transcribe(self.settings, wav_path, log_tag="pipeline")
         if not user_text.strip():
             user_text = "(silence)"
-        log.info("User text: %r", _log_snippet(user_text, 200))
+        log.info("[pipeline] User text: %r", _log_snippet(user_text, 200))
         self.memory.add_turn(self._conversation_id, "user", user_text)
 
         ctx = self.memory.get_context_messages(
@@ -317,20 +324,20 @@ class AssistantController:
         if not reply:
             reply = "I didn't catch that."
         log.info(
-            "Assistant text (%d chars, %.2fs since pipeline start): %r",
+            "[pipeline] Assistant text (%d chars, %.2fs since pipeline start): %r",
             len(reply),
             time.monotonic() - t0,
             _log_snippet(reply, 200),
         )
         self.memory.add_turn(self._conversation_id, "assistant", reply)
 
-        out_wav = synthesize(self.settings, reply)
+        out_wav = synthesize(self.settings, reply, log_tag="pipeline")
         try:
             wav_path.unlink(missing_ok=True)
         except OSError:
             pass
         log.info(
-            "Pipeline complete in %.2fs (reply wav=%s)",
+            "[pipeline] Pipeline complete in %.2fs (reply wav=%s)",
             time.monotonic() - t0,
             out_wav.name,
         )
@@ -351,7 +358,7 @@ class AssistantController:
             self._enter_error_state("Oh no — I'm a bit broken right now.", e)
             return
 
-        log.info("Starting playback: %s", wav_path.name)
+        log.info("[reply] Starting playback: %s", wav_path.name)
         env = wav_envelope(wav_path, bins=48)
         speak_dur = 3.0
         try:
@@ -375,7 +382,12 @@ class AssistantController:
         self._cancel_play.clear()
 
         def play_job() -> None:
-            play_wav(wav_path, self.settings, cancel_event=self._cancel_play)
+            play_wav(
+                wav_path,
+                self.settings,
+                cancel_event=self._cancel_play,
+                log_tag="reply",
+            )
 
         play_fut = self._executor.submit(play_job)
         play_fut.add_done_callback(lambda f: self._on_play_done(f, wav_path))

@@ -13,7 +13,13 @@ from config import Settings
 log = logging.getLogger(__name__)
 
 
-def transcribe(settings: Settings, wav_path: Path) -> str:
+def _pfx(tag: str | None) -> str:
+    return f"[{tag}] " if tag else ""
+
+
+def transcribe(
+    settings: Settings, wav_path: Path, *, log_tag: str | None = None
+) -> str:
     if not settings.whisper_cli.is_file():
         raise FileNotFoundError(f"whisper-cli not found: {settings.whisper_cli}")
     if not settings.whisper_model.is_file():
@@ -41,8 +47,13 @@ def transcribe(settings: Settings, wav_path: Path) -> str:
         sz = wav_path.stat().st_size
     except OSError:
         sz = -1
-    log.info("STT: whisper-cli on %s (~%d bytes)", wav_path.name, sz)
-    log.debug("STT cmd: %s", " ".join(cmd))
+    log.info(
+        "%sSTT: whisper-cli on %s (~%d bytes)",
+        _pfx(log_tag),
+        wav_path.name,
+        sz,
+    )
+    log.debug("%sSTT cmd: %s", _pfx(log_tag), " ".join(cmd))
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         log.error("whisper-cli stderr: %s", proc.stderr)
@@ -63,5 +74,10 @@ def transcribe(settings: Settings, wav_path: Path) -> str:
             pass
 
     out = text.strip()
-    log.info("STT: finished in %.2fs (%d chars)", time.monotonic() - t0, len(out))
+    log.info(
+        "%sSTT: finished in %.2fs (%d chars)",
+        _pfx(log_tag),
+        time.monotonic() - t0,
+        len(out),
+    )
     return out

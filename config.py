@@ -38,7 +38,22 @@ class Settings(BaseSettings):
 
     # Ollama
     ollama_host: str = Field(default="http://127.0.0.1:11434")
-    ollama_model: str = Field(default="qwen3:1.7b")
+    ollama_model: str = Field(
+        default="qwen3.5:0.8b",
+        description=(
+            "Preferred model tag (`ollama list`). At startup the app lists installed models "
+            "and uses this tag if present; otherwise the first installed tag (sorted). "
+            "Set empty to skip this preference and always use the first sorted tag."
+        ),
+    )
+    ollama_think: bool | None = Field(
+        default=False,
+        description=(
+            "Ollama /api/chat `think` flag. False disables hidden reasoning tokens (recommended "
+            "for Qwen 3.5 so visible reply gets the full num_predict budget). True enables "
+            "thinking. None omits the parameter (server default)."
+        ),
+    )
 
     # Web search (optional; requires network + provider credentials unless provider is ddgs)
     web_search_enabled: bool = Field(default=False)
