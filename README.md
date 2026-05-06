@@ -10,7 +10,7 @@ cd gemma-pi
 ./bootstrap.sh
 ```
 
-`bootstrap.sh` creates **`venv/`**, installs **Python dependencies**, and (unless you pass `--skip-ollama`) ensures **Ollama** is installed (**Linux**: official install script; **macOS**: `brew install ollama` when Homebrew exists) and runs **`ollama pull`** for `PI_ASSISTANT_OLLAMA_MODEL` (default `gemma3:1b`). Use **`./bootstrap.sh --dry-run`** to print steps only.
+`bootstrap.sh` creates **`venv/`**, installs **Python dependencies**, and (unless you pass `--skip-ollama`) ensures **Ollama** is installed (**Linux**: official install script; **macOS**: `brew install ollama` when Homebrew exists) and runs **`ollama pull`** for `PI_ASSISTANT_OLLAMA_MODEL` (default `qwen3:1.7b`). Use **`./bootstrap.sh --dry-run`** to print steps only.
 
 Then:
 
@@ -32,7 +32,7 @@ All app keys use the prefix **`PI_ASSISTANT_`** (see [`config.py`](config.py)). 
 | Variable | Purpose |
 |----------|---------|
 | `PI_ASSISTANT_OLLAMA_HOST` | Ollama base URL (default `http://127.0.0.1:11434`) |
-| `PI_ASSISTANT_OLLAMA_MODEL` | Model tag (default `gemma3:1b`) |
+| `PI_ASSISTANT_OLLAMA_MODEL` | Model tag (default `qwen3:1.7b`) |
 | `PI_ASSISTANT_WEB_SEARCH_ENABLED` | `true` / `false` — expose Ollama **`web_search`** tool (needs network; see below) |
 | `PI_ASSISTANT_WEB_SEARCH_PROVIDER` | `ddgs` (default, no API key), `brave`, or `tavily` |
 | `PI_ASSISTANT_BRAVE_API_KEY` / `PI_ASSISTANT_TAVILY_API_KEY` | Provider keys when using Brave or Tavily |
@@ -65,11 +65,11 @@ pactl get-default-sink
 
 When **`PI_ASSISTANT_WEB_SEARCH_ENABLED=true`**, Pi registers a **`web_search`** tool with Ollama: the model can search the web for time-sensitive or factual questions. This **requires network access** on the device running the app (unlike the default offline stack).
 
-- **Models:** Tags like **`gemma3:1b`** may **not support tools** in Ollama (HTTP 400). The app then **falls back to normal chat** (no live web) and logs a warning. For real **`web_search`**, use a tool-capable model (e.g. **Llama 3.2**, **Mistral**, **Qwen 2.5**): `ollama pull llama3.2` and set `PI_ASSISTANT_OLLAMA_MODEL=llama3.2`.
+- **Models:** If your tag **does not support tools** in Ollama (HTTP 400), the app **falls back to normal chat** (no live web) and logs a warning. **`qwen3:1.7b`** is a reasonable default for chat; for **`web_search`**, use a tool-capable tag if yours errors (e.g. **Llama 3.2**, **Mistral**, **Qwen 2.5**): `ollama pull llama3.2` and set `PI_ASSISTANT_OLLAMA_MODEL=llama3.2`.
 - **Providers:** Default **`ddgs`** uses the `duckduckgo-search` package (no API key). For production, consider **Brave** or **Tavily** with keys in `.env`.
 - **Prompts:** Markdown under [`prompts/web/`](prompts/web/) is merged into the **system** message only when web search is enabled (grounding, privacy, voice UX). Restart the app after changing `.env` so the merged system prompt matches the flag.
 
-## Prompts (always sent to Gemma)
+## Prompts (system message to the LLM)
 
 Markdown files under [`prompts/`](prompts/) are read in **lexicographic order**, joined with `---` separators, and sent as the **system** message to Ollama. Files named `README.md` or starting with **`_`** are skipped. If the directory is missing or empty, a small built-in fallback is used.
 
@@ -94,7 +94,7 @@ Backup: copy the `.db` file while the app is stopped (or rely on SQLite WAL + no
 
 ## Caveman
 
-- **Runtime (Gemma)**: Terse style hints live in **[`prompts/02_style.md`](prompts/02_style.md)** (inspired by [Caveman](https://github.com/JuliusBrussee/caveman); not a runtime dependency).
+- **Runtime (voice style)**: Terse style hints live in **[`prompts/02_style.md`](prompts/02_style.md)** (inspired by [Caveman](https://github.com/JuliusBrussee/caveman); not a runtime dependency).
 - **Cursor / editor**: Install the upstream skill for your own workflow, for example:
 
   ```bash

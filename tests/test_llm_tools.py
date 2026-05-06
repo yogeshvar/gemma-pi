@@ -61,13 +61,13 @@ class ChatWithToolsTests(unittest.TestCase):
         self.assertEqual(out, "Done.")
 
     def test_falls_back_to_plain_chat_when_model_rejects_tools(self) -> None:
-        settings = Settings(web_search_max_tool_rounds=3, ollama_model="gemma3:1b")
+        settings = Settings(web_search_max_tool_rounds=3, ollama_model="qwen3:1.7b")
 
         class FakeResponseError(Exception):
             status_code = 400
 
         err = FakeResponseError(
-            "registry.ollama.ai/library/gemma3:1b does not support tools (status code: 400)"
+            "registry.ollama.ai/library/qwen3:1.7b does not support tools (status code: 400)"
         )
 
         mock_client = MagicMock()

@@ -38,7 +38,7 @@ class Settings(BaseSettings):
 
     # Ollama
     ollama_host: str = Field(default="http://127.0.0.1:11434")
-    ollama_model: str = Field(default="gemma3:1b")
+    ollama_model: str = Field(default="qwen3:1.7b")
 
     # Web search (optional; requires network + provider credentials unless provider is ddgs)
     web_search_enabled: bool = Field(default=False)

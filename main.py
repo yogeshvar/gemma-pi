@@ -112,13 +112,28 @@ def run_ui() -> None:
     finally:
         ctrl.close()
         try:
+            pygame.event.clear()
+            # Drop exclusive fullscreen before SDL teardown (helps KMS/DRM on Pi).
+            if settings.fullscreen:
+                screen = pygame.display.set_mode(
+                    (settings.screen_width, settings.screen_height),
+                    0,
+                )
+                pygame.display.flip()
+                pygame.time.wait(50)
             screen.fill((0, 0, 0))
             pygame.display.flip()
             pygame.time.wait(30)
         except Exception:
             pass
-        pygame.display.quit()
-        pygame.quit()
+        try:
+            pygame.display.quit()
+        except Exception:
+            pass
+        try:
+            pygame.quit()
+        except Exception:
+            pass
 
 
 def main() -> None:
