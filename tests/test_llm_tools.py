@@ -60,6 +60,35 @@ class ChatWithToolsTests(unittest.TestCase):
         sw.assert_not_called()
         self.assertEqual(out, "Done.")
 
+    def test_falls_back_to_plain_chat_when_model_rejects_tools(self) -> None:
+        settings = Settings(web_search_max_tool_rounds=3, ollama_model="gemma3:1b")
+
+        class FakeResponseError(Exception):
+            status_code = 400
+
+        err = FakeResponseError(
+            "registry.ollama.ai/library/gemma3:1b does not support tools (status code: 400)"
+        )
+
+        mock_client = MagicMock()
+        mock_client.chat.side_effect = err
+
+        with patch("core.llm._client", return_value=mock_client):
+            with patch("core.llm.chat", return_value="plain reply") as plain:
+                out = chat_with_tools(
+                    settings,
+                    [{"role": "system", "content": "s"}, {"role": "user", "content": "hi"}],
+                )
+
+        self.assertEqual(out, "plain reply")
+        plain.assert_called_once()
+        call_msgs = plain.call_args[0][1]
+        self.assertEqual(
+            call_msgs,
+            [{"role": "system", "content": "s"}, {"role": "user", "content": "hi"}],
+        )
+        self.assertEqual(mock_client.chat.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

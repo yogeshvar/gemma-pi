@@ -64,7 +64,7 @@ pactl get-default-sink
 
 When **`PI_ASSISTANT_WEB_SEARCH_ENABLED=true`**, Pi registers a **`web_search`** tool with Ollama: the model can search the web for time-sensitive or factual questions. This **requires network access** on the device running the app (unlike the default offline stack).
 
-- **Models:** Small tags like `gemma3:1b` may handle tools poorly; prefer tool-capable models (e.g. **Llama 3.2**, **Mistral**, **Qwen 2.5**) when web search is on.
+- **Models:** Tags like **`gemma3:1b`** may **not support tools** in Ollama (HTTP 400). The app then **falls back to normal chat** (no live web) and logs a warning. For real **`web_search`**, use a tool-capable model (e.g. **Llama 3.2**, **Mistral**, **Qwen 2.5**): `ollama pull llama3.2` and set `PI_ASSISTANT_OLLAMA_MODEL=llama3.2`.
 - **Providers:** Default **`ddgs`** uses the `duckduckgo-search` package (no API key). For production, consider **Brave** or **Tavily** with keys in `.env`.
 - **Prompts:** Markdown under [`prompts/web/`](prompts/web/) is merged into the **system** message only when web search is enabled (grounding, privacy, voice UX). Restart the app after changing `.env` so the merged system prompt matches the flag.
 

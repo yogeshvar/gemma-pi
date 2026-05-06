@@ -40,6 +40,31 @@ def _client(settings: Settings) -> Client:
     return Client(host=settings.ollama_host)
 
 
+def _model_rejects_tools(exc: Exception) -> bool:
+    """True when Ollama returns 400 because the model cannot use tools."""
+    code = getattr(exc, "status_code", None)
+    text = str(exc).lower()
+    if code != 400:
+        return False
+    return "does not support tools" in text or "not support tools" in text
+
+
+def _messages_for_plain_chat(messages: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
+    """Strip to role/content strings for /api/chat without tools."""
+    out: list[dict[str, str]] = []
+    for m in messages:
+        role = str(m.get("role", "user"))
+        raw = m.get("content")
+        if raw is None:
+            content = ""
+        elif isinstance(raw, str):
+            content = raw
+        else:
+            content = str(raw)
+        out.append({"role": role, "content": content})
+    return out
+
+
 def _tool_args(arguments: Mapping[str, Any] | str | None) -> dict[str, Any]:
     if arguments is None:
         return {}
@@ -107,12 +132,24 @@ def chat_with_tools(
     messages_work: list[Any] = [dict(m) for m in messages]
 
     for round_i in range(settings.web_search_max_tool_rounds):
-        resp = client.chat(
-            model=settings.ollama_model,
-            messages=messages_work,
-            tools=tools,
-            stream=False,
-        )
+        try:
+            resp = client.chat(
+                model=settings.ollama_model,
+                messages=messages_work,
+                tools=tools,
+                stream=False,
+            )
+        except Exception as e:
+            if round_i == 0 and _model_rejects_tools(e):
+                log.warning(
+                    "Model %r does not support tools; answering without web_search. "
+                    "Pull a tool-capable model (e.g. llama3.2) or set "
+                    "PI_ASSISTANT_WEB_SEARCH_ENABLED=false.",
+                    settings.ollama_model,
+                )
+                plain = _messages_for_plain_chat(messages)
+                return chat(settings, plain, stream=True)
+            raise
         msg = resp.message
         tool_calls = msg.tool_calls
 
