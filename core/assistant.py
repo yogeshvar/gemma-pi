@@ -6,7 +6,7 @@ import logging
 import threading
 import time
 import wave
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import Enum, auto
@@ -14,7 +14,6 @@ from pathlib import Path
 
 from config import Settings
 
-from .daemon_executor import DaemonThreadPoolExecutor
 from .audio_envelope import wav_envelope
 from .audio_io import RmsRingBuffer, play_wav, record_until_silence
 from .llm import chat, chat_with_tools
@@ -65,7 +64,7 @@ class AssistantController:
         self._cancel_play = threading.Event()
         self._filler_cancel = threading.Event()
         self._filler_thread: threading.Thread | None = None
-        self._executor = DaemonThreadPoolExecutor(max_workers=2, thread_name_prefix="pi_ast")
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pi_ast")
         self._record_future: Future | None = None
         self._conversation_id = 0
         self._system_message = build_system_message(settings)
@@ -74,7 +73,9 @@ class AssistantController:
         self._cancel_record.set()
         self._cancel_play.set()
         self._stop_thinking_fillers()
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        # wait=True so workers exit cleanly (close PortAudio/SDL streams). Daemon-kill
+        # mid‑I/O has been linked to unstable ALSA/KMS on embedded boards.
+        self._executor.shutdown(wait=True, cancel_futures=True)
         self.memory.close()
 
     def _stop_thinking_fillers(self) -> None:
